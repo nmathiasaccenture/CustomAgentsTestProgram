@@ -1,0 +1,45 @@
+:root {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+}
+
+.app {
+  text-align: center;
+  padding: 2rem;
+}
+
+.counter__value {
+  font-size: 3rem;
+  font-variant-numeric: tabular-nums;
+  margin: 0.25rem 0 1rem;
+}
+
+.counter__controls {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.counter__controls button {
+  font-size: 1.25rem;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+
+.counter__step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.counter__step input {
+  width: 4rem;
+}
