@@ -71,3 +71,54 @@ body {
   color: #c00;
   font-size: 0.85rem;
 }
+
+/*
+ * Focus ring for the counter section element. Applied only on :focus-visible
+ * (keyboard/programmatic focus) rather than plain :focus so that the ring does
+ * NOT appear after the mount useEffect focuses the section — browsers suppress
+ * :focus-visible for programmatic focus when the user has not recently used the
+ * keyboard. This keeps the initial render clean while still drawing the ring
+ * when a user Tabs into the section or returns focus via the keyboard.
+ */
+.counter:focus-visible {
+  outline: 2px solid #646cff;
+  outline-offset: 4px;
+}
+
+/*
+ * Badge shown during keyboard step-entry mode. Appears below the step input
+ * while the user is typing a new step value via the S shortcut, and disappears
+ * immediately when Enter commits or Escape cancels.
+ *
+ * Color palette deliberately echoes the existing #646cff accent (link/focus
+ * color used elsewhere) with a muted dark background so it reads as an
+ * "in-progress" indicator rather than an error or success state.
+ *
+ * The dark-palette values (#2a2a3a / #a0a8ff) are invisible in light mode, so
+ * a @media override below switches to a light lavender background with dark
+ * indigo text — staying within the same #646cff accent family.
+ */
+.counter__step-entry {
+  display: inline-block;
+  margin-top: 0.35rem;
+  padding: 0.15rem 0.4rem;
+  background: #2a2a3a;
+  color: #a0a8ff;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-family: monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  /*
+   * Light-mode override for the step-entry badge. The default dark palette
+   * (#2a2a3a bg / #a0a8ff text) has near-zero contrast on a white page.
+   * #e8eaff is a pale lavender that pairs with the #646cff focus-ring accent;
+   * #3a3fbf is a dark indigo derived from the same hue, giving WCAG AA contrast
+   * against that background.
+   */
+  .counter__step-entry {
+    background: #e8eaff;
+    color: #3a3fbf;
+  }
+}

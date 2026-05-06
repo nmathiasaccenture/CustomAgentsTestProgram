@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 
 export type CounterProps = {
   initial?: number;
@@ -31,6 +31,19 @@ const STEP_ERROR_MESSAGE = "Step must be positive number";
  *   - When the entry is invalid, a red error message appears below the input.
  *     `stepSize` is intentionally left at its last valid value so increment/
  *     decrement still make progress at the rate the user previously chose.
+ *
+ * Keyboard shortcuts (when focus is on the section, not inside the step input):
+ *   - ArrowUp   → increment by current step
+ *   - ArrowDown → decrement by current step
+ *   - r / R     → reset count to initial value
+ *   - s / S     → enter step-entry mode (type digits, Enter to commit, Esc to cancel)
+ *
+ * Step-entry mode:
+ *   While active, digit keys append to a temporary buffer (capped at 9 chars)
+ *   displayed as a badge. Backspace removes the last digit. Enter commits
+ *   (validates and applies) or shows an error if invalid. Escape cancels and
+ *   also clears any stale error badge. Tab is never suppressed — keyboard-only
+ *   users must always be able to move focus away. All other keys are suppressed.
  */
 export function Counter({ initial = 0, step = 1 }: CounterProps) {
   const [count, setCount] = useState(initial);
@@ -41,6 +54,33 @@ export function Counter({ initial = 0, step = 1 }: CounterProps) {
   // null when no error is showing. Holds the literal message string when an
   // invalid entry is currently displayed.
   const [stepError, setStepError] = useState<string | null>(null);
+
+  // True while the user is in the keyboard step-entry flow (pressed S and has
+  // not yet committed or cancelled). False at rest.
+  const [stepEntryMode, setStepEntryMode] = useState(false);
+
+  // Digit characters typed since S was pressed. Stored as a string so we can
+  // display it directly and parse it with Number() on commit.
+  const [stepEntryBuffer, setStepEntryBuffer] = useState("");
+
+  // Ref attached to the <section> element so we can programmatically focus it
+  // on mount. This ensures keyboard shortcuts work immediately without the user
+  // clicking first. tabIndex={-1} makes the element programmatically focusable
+  // while keeping it out of the natural Tab order (buttons handle their own Tab).
+  const sectionRef = useRef<HTMLElement>(null);
+
+  /**
+   * Mount focus effect — moves focus to the section element as soon as the
+   * component is inserted into the DOM.
+   *
+   * Why `?.focus()` rather than `!.focus()`? The optional-chain form is safe
+   * in any environment where the ref might not yet be attached (e.g. server
+   * rendering or shallow test mounts that don't call `useEffect`). There is no
+   * meaningful error to surface if the ref is null — we simply skip focus.
+   */
+  useEffect(() => {
+    sectionRef.current?.focus();
+  }, []);
 
   const increment = () => setCount((c) => c + stepSize);
   const decrement = () => setCount((c) => c - stepSize);
@@ -97,13 +137,202 @@ export function Counter({ initial = 0, step = 1 }: CounterProps) {
     }
   };
 
+  /**
+   * enterStepEntry — activate keyboard step-entry mode.
+   *
+   * Called when the user presses S in normal mode. Resets the digit buffer to
+   * empty so any previous (cancelled or committed) session does not bleed
+   * through, then flips `stepEntryMode` to true so `onSectionKeyDown` routes
+   * subsequent keys into the buffer instead of the normal shortcut handlers.
+   *
+   * @returns void — state is updated as a side effect.
+   */
+  const enterStepEntry = () => {
+    setStepEntryMode(true);
+    setStepEntryBuffer("");
+  };
+
+  /**
+   * cancelStepEntry — exit step-entry mode without applying any change.
+   *
+   * Called when the user presses Escape during step-entry mode. Deliberately
+   * does NOT touch `stepSize` or `stepInput` — the goal is a pure "never mind"
+   * that leaves the counter operating exactly as it was before S was pressed.
+   *
+   * `stepError` IS cleared here. If a previous failed commitStepEntry left an
+   * error badge showing, pressing S and then Escape is semantically a cancellation
+   * of the entire entry flow; surfacing a stale error from a prior attempt would
+   * be misleading. Clearing it makes Escape a true "back to normal" action.
+   *
+   * @returns void — state is updated as a side effect.
+   */
+  const cancelStepEntry = () => {
+    setStepEntryMode(false);
+    setStepEntryBuffer("");
+    setStepError(null);
+  };
+
+  /**
+   * commitStepEntry — validate the current buffer and apply it as the new step.
+   *
+   * Called when the user presses Enter during step-entry mode. Parses the
+   * accumulated digit string with `Number(...)` and applies two validity checks:
+   *
+   *   1. `Number.isFinite(parsed)` — rejects NaN (empty buffer → `Number("")` → 0,
+   *      which falls through to the integer check below) and Infinity.
+   *   2. `Number.isInteger(parsed)` — ensures no decimal was somehow introduced.
+   *   3. `parsed >= 1` — step must be at least 1 (strictly positive integer).
+   *
+   * On ACCEPT: updates `stepSize`, `stepInput` (so the visible field reflects
+   * the new value), and clears `stepError`.
+   *
+   * On REJECT (empty buffer, zero, negative, non-integer, non-finite): sets
+   * `stepError` to STEP_ERROR_MESSAGE only. `stepSize` and `stepInput` are
+   * intentionally left untouched so the counter keeps working at the last
+   * valid rate.
+   *
+   * Either way: always exits step-entry mode by clearing `stepEntryMode` and
+   * `stepEntryBuffer`.
+   *
+   * Why `Number.isInteger` in addition to `isFinite`? The buffer only collects
+   * digit characters (0-9) via `onSectionKeyDown`, so a decimal is impossible
+   * in practice — but the guard is cheap and makes the acceptance rule explicit
+   * and self-documenting rather than relying on an implicit assumption about
+   * the buffer's contents.
+   *
+   * @returns void — all effects are state updates.
+   */
+  const commitStepEntry = () => {
+    const parsed = Number(stepEntryBuffer);
+    if (
+      Number.isFinite(parsed) &&
+      Number.isInteger(parsed) &&
+      parsed >= 1
+    ) {
+      setStepSize(parsed);
+      setStepInput(String(parsed));
+      setStepError(null);
+    } else {
+      setStepError(STEP_ERROR_MESSAGE);
+    }
+    // Always exit mode, regardless of validation outcome.
+    setStepEntryMode(false);
+    setStepEntryBuffer("");
+  };
+
+  /**
+   * onSectionKeyDown — top-level keyboard handler attached to the <section>.
+   *
+   * Routes key events to the correct action depending on whether the app is in
+   * normal mode or step-entry mode. Two guards at the top prevent this handler
+   * from intercepting events that belong to native controls or browser shortcuts.
+   *
+   * Branching order (must be followed exactly — order matters):
+   *
+   * 1. Step-input guard: if the event originates inside an <input>, return
+   *    immediately. This allows ArrowUp/Down to spin the step number input
+   *    natively and prevents r/s from firing while the user edits the field.
+   *
+   * 2. Modifier guard: if Ctrl, Meta (Cmd), or Alt is held, return immediately.
+   *    This lets Ctrl+R (browser reload), Cmd+R (Mac reload), and similar
+   *    OS/browser shortcuts pass through unmodified.
+   *
+   * 3. Step-entry mode active (stepEntryMode === true):
+   *    - Digit (0-9)  → append to buffer (capped at 9 chars), preventDefault.
+   *    - Backspace     → remove last buffer character, preventDefault.
+   *    - Enter         → commitStepEntry(), preventDefault.
+   *    - Escape        → cancelStepEntry(), preventDefault.
+   *    - Tab           → return without preventDefault (must not trap focus).
+   *    - Anything else → preventDefault and return (suppresses ArrowUp/Down,
+   *                      r/R, s/S, and all other keys while in mode).
+   *
+   * 4. Normal mode (stepEntryMode === false) — switch on lowercased key:
+   *    - "arrowup"   → increment(), preventDefault.
+   *    - "arrowdown" → decrement(), preventDefault.
+   *    - "r"         → reset(), preventDefault.
+   *    - "s"         → enterStepEntry(), preventDefault.
+   *    - default     → do nothing (no preventDefault — let the browser handle it).
+   *
+   * @param event - The React synthetic keyboard event from the <section> element.
+   * @returns void — all effects are either state updates or DOM calls.
+   */
+  const onSectionKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    // Guard 1: let native <input> controls handle their own keys.
+    if (event.target instanceof HTMLInputElement) return;
+
+    // Guard 2: don't intercept browser/OS shortcuts that use modifier keys.
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    if (stepEntryMode) {
+      // Step-entry mode: digits build the buffer; Enter commits; Esc cancels;
+      // everything else is suppressed to avoid accidental increments/resets.
+      if (/^[0-9]$/.test(event.key)) {
+        // Cap at 9 characters: Number.MAX_SAFE_INTEGER has 16 digits, but a
+        // 9-digit step (up to 999,999,999) is already far beyond any practical
+        // use and keeps us comfortably within safe integer range.
+        setStepEntryBuffer((b) => b.length < 9 ? b + event.key : b);
+        event.preventDefault();
+      } else if (event.key === "Backspace") {
+        setStepEntryBuffer((b) => b.slice(0, -1));
+        event.preventDefault();
+      } else if (event.key === "Enter") {
+        commitStepEntry();
+        event.preventDefault();
+      } else if (event.key === "Escape") {
+        cancelStepEntry();
+        event.preventDefault();
+      } else {
+        // Suppress all other keys (ArrowUp, ArrowDown, r, s, etc.) so they
+        // cannot accidentally trigger shortcuts while the user is midway
+        // through typing a new step value.
+        //
+        // Exception: Tab must NOT be suppressed. Keyboard-only users may need
+        // to Tab away from the section mid-entry (e.g. to reach a browser
+        // address bar or another page control). Trapping Tab here would make
+        // the page inaccessible without a mouse.
+        if (event.key === "Tab") return;
+        event.preventDefault();
+      }
+    } else {
+      // Normal mode: single-key shortcuts.
+      switch (event.key.toLowerCase()) {
+        case "arrowup":
+          increment();
+          event.preventDefault();
+          break;
+        case "arrowdown":
+          decrement();
+          event.preventDefault();
+          break;
+        case "r":
+          reset();
+          event.preventDefault();
+          break;
+        case "s":
+          enterStepEntry();
+          event.preventDefault();
+          break;
+        default:
+          // Intentionally no preventDefault — unrecognised keys must not be
+          // swallowed (e.g. Tab for focus movement, F5 for refresh, etc.).
+          break;
+      }
+    }
+  };
+
   // Derived once for readability and to keep ARIA wiring consistent: when
   // there is no error we omit `aria-describedby` entirely rather than point
   // it at a non-existent id (screen readers complain about dangling refs).
   const hasError = stepError !== null;
 
   return (
-    <section className="counter" aria-label="counter">
+    <section
+      className="counter"
+      aria-label="counter"
+      ref={sectionRef}
+      tabIndex={-1}
+      onKeyDown={onSectionKeyDown}
+    >
       <p className="counter__value" data-testid="count">
         {count}
       </p>
@@ -145,6 +374,22 @@ export function Counter({ initial = 0, step = 1 }: CounterProps) {
               className="counter__error"
             >
               {stepError}
+            </span>
+          )}
+          {/*
+            Step-entry mode indicator. Appears between S-press and Enter/Esc.
+            role="status" with aria-live="polite" announces buffer changes to
+            screen readers without interrupting whatever they were saying.
+            The underscore placeholder when the buffer is empty signals to the
+            user that the mode is active and awaiting a first digit.
+          */}
+          {stepEntryMode && (
+            <span
+              className="counter__step-entry"
+              role="status"
+              aria-live="polite"
+            >
+              Step entry: {stepEntryBuffer || "_"}
             </span>
           )}
         </span>

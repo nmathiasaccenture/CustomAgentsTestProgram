@@ -1,6 +1,6 @@
 # Counter App
 
-A minimal React + TypeScript counter with increment, decrement, reset, double, and a configurable step size. Built with Vite and tested with Vitest + React Testing Library.
+A minimal React + TypeScript counter with increment, decrement, reset, double, keyboard shortcuts, and a configurable step size. Built with Vite and tested with Vitest + React Testing Library.
 
 This project was scaffolded by running the 6-stage [PIPELINE.md](PIPELINE.md) (plan → build → test → review → fix → docs).
 
@@ -43,8 +43,31 @@ import { Counter } from "./src/components/Counter";
 | `Double` | Multiplies the current count by 2 immediately (one-shot; does not change the step) |
 | `Step` input | Updates the step size used by `+` and `−` |
 
+### Keyboard shortcuts
+
+The counter section receives focus on mount. Shortcuts fire when focus is on the counter (not inside the step input) and no modifier key (`Ctrl`, `Meta`, `Alt`) is held.
+
+| Key | Action |
+|---|---|
+| `ArrowUp` | Increment by current step |
+| `ArrowDown` | Decrement by current step |
+| `r` / `R` | Reset count to `initial` |
+| `s` / `S` | Enter step-entry mode |
+| `Tab` | Move focus (never suppressed) |
+
+#### Step-entry mode
+
+Press `s` or `S` to enter step-entry mode. A badge appears showing the digits typed so far (`Step entry: _` while empty). Type any digits to build the new step value (up to 9 digits). Press:
+
+- **`Enter`** — commit. Must be a positive integer ≥ 1; invalid input shows the error message instead.
+- **`Escape`** — cancel with no changes (also clears any existing error).
+- **`Backspace`** — remove the last digit.
+
+While in step-entry mode, `ArrowUp`/`ArrowDown`, `r`, and `s` are suppressed — they will not fire until you commit or cancel.
+
 ### Edge cases
 
+- Keyboard shortcuts are scoped to the counter section — they do not fire when focus is inside the step input (ArrowUp/Down drive the native spinner there) or when a modifier key is held.
 - A non-positive or non-numeric step (`0`, `-2`, empty input) shows the error message `"Step must be positive number"` below the input. While the error is showing, `stepSize` is preserved at the last valid value, so `+` / `−` continue to use the previous good step. The error clears as soon as a valid positive number is entered.
 - `Reset` returns the count to whatever `initial` was passed in, not zero.
 - `Double` does not modify the configured step, so subsequent `+` / `−` still use the same step value. Doubling a negative count yields a more-negative count, and doubling `0` stays `0`.
@@ -55,7 +78,7 @@ import { Counter } from "./src/components/Counter";
 src/
   components/
     Counter.tsx        # the feature
-    Counter.test.tsx   # unit tests (20 cases)
+    Counter.test.tsx   # unit tests (39 cases)
   App.tsx              # mounts <Counter />
   main.tsx             # React entry
   setupTests.ts        # @testing-library/jest-dom setup
@@ -73,5 +96,7 @@ The test suite covers:
 - Validation: invalid step (0, negative, cleared, non-numeric) shows an error message and preserves the last valid step
 - Accessibility: error element exposes `role="alert"`; input wires `aria-invalid` and `aria-describedby`
 - Doubling: multiplies the current count by 2 without modifying the step
+- Keyboard shortcuts: ArrowUp/Down, r/R increment/decrement/reset; Tab never suppressed
+- Step-entry mode: digit buffer, Enter to commit, Escape to cancel, suppression of other keys while active
 
 Run once: `npm test`. Watch mode: `npm run test:watch`.
