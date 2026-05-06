@@ -1,4 +1,9 @@
 import { useState, useRef, useEffect } from "react";
+import {
+  loadCounterState,
+  saveCounterState,
+  clearCounterState,
+} from "../lib/counterStorage";
 
 export type CounterProps = {
   initial?: number;
@@ -70,6 +75,24 @@ export function Counter({ initial = 0, step = 1 }: CounterProps) {
   const sectionRef = useRef<HTMLElement>(null);
 
   /**
+   * Hydration coordination flag.
+   *
+   * Why a ref and not state?
+   *   We need a synchronous, non-rendering signal that the persistence-load
+   *   effect has run. A `useState` boolean would trigger an extra render on
+   *   flip and — more importantly — would not be observable inside the same
+   *   commit by the save effect below.
+   *
+   * Why does it exist at all?
+   *   Without it, the save effect would fire on the very first commit (when
+   *   `count`/`stepSize` still hold the prop defaults) and overwrite a valid
+   *   saved snapshot before the load effect ever gets the chance to run. The
+   *   guard makes saves a no-op until hydration is complete, after which the
+   *   effect behaves normally for every subsequent change.
+   */
+  const hasHydratedRef = useRef<boolean>(false);
+
+  /**
    * Mount focus effect — moves focus to the section element as soon as the
    * component is inserted into the DOM.
    *
@@ -82,9 +105,96 @@ export function Counter({ initial = 0, step = 1 }: CounterProps) {
     sectionRef.current?.focus();
   }, []);
 
+  /**
+   * Hydration effect — runs once on mount, reads any persisted snapshot, and
+   * if found applies it to the live state via the existing setters.
+   *
+   * StrictMode safety:
+   *   React 18 StrictMode mounts effects twice in dev. This effect is idempotent
+   *   because it only ever calls `setCount` / `setStepSize` / `setStepInput`
+   *   with the SAME loaded values — the second invocation sets state to what
+   *   it already equals, which React short-circuits.
+   *
+   * Why also set `stepInput`?
+   *   `stepInput` is the user-visible string bound to the <input>. Restoring
+   *   `stepSize` without restoring `stepInput` would show the prop-default
+   *   number in the field while the buttons used the persisted step — a
+   *   confusing mismatch. We mirror the loaded `stepSize` into the string.
+   *
+   * `hasHydratedRef.current = true` runs unconditionally at the end so that
+   * even on a first visit (no saved state) subsequent changes are persisted.
+   */
+  useEffect(() => {
+    const loaded = loadCounterState();
+    if (loaded !== null) {
+      setCount(loaded.count);
+      setStepSize(loaded.stepSize);
+      setStepInput(String(loaded.stepSize));
+    }
+    hasHydratedRef.current = true;
+  }, []);
+
+  /**
+   * Persistence effect — writes `{ count, stepSize }` to localStorage whenever
+   * either value changes.
+   *
+   * Why the `hasHydratedRef` early-return?
+   *   On first commit, `count` and `stepSize` hold the prop defaults
+   *   (`initial`, `step`). If we wrote those out before the hydration effect
+   *   above had a chance to overwrite them, we would clobber any genuinely
+   *   saved snapshot with the defaults — defeating the whole point of
+   *   persistence. The ref blocks the very first run; once hydration finishes
+   *   it stays `true` for the lifetime of the component and every subsequent
+   *   change persists normally.
+   *
+   * Note: we intentionally do NOT include `stepInput` in the deps array —
+   * partial / invalid keystrokes ("", "abc") shouldn't trigger writes; only
+   * accepted `stepSize` changes should.
+   */
+  useEffect(() => {
+    if (!hasHydratedRef.current) return;
+    saveCounterState({ count, stepSize });
+  }, [count, stepSize]);
+
   const increment = () => setCount((c) => c + stepSize);
   const decrement = () => setCount((c) => c - stepSize);
   const reset = () => setCount(initial);
+
+  /**
+   * clearSaved — wipe the persisted snapshot AND restore the in-memory state
+   * to a pristine "as if just mounted with no saved data" condition.
+   *
+   * Why reset every related slice rather than just clear storage?
+   *   Clearing localStorage alone would leave the live UI in whatever state
+   *   the user was in before the click — meaning the next change would
+   *   immediately re-persist that state and undo the clear from the user's
+   *   perspective. Resetting state in lock-step with the storage clear gives
+   *   the button a single, intuitive meaning: "go back to factory defaults".
+   *
+   * Slices reset (in order, mirroring the constructor's defaults):
+   *   - count          → `initial` prop
+   *   - stepSize       → `step` prop
+   *   - stepInput      → `String(step)` so the visible field matches stepSize
+   *   - stepError      → null (any stale error must not survive the reset)
+   *   - stepEntryMode  → false (exit step-entry mode if it was active)
+   *   - stepEntryBuffer → "" (drop any partially-typed digits)
+   *
+   * The follow-up `saveCounterState` triggered by the persistence effect WILL
+   * fire after this handler finishes (because `count`/`stepSize` changed), but
+   * it will write the prop-default values — which is a benign no-op from the
+   * user's perspective and keeps the storage in sync with the visible state.
+   *
+   * @returns void — all effects are state updates and a side-effecting clear.
+   */
+  const clearSaved = () => {
+    clearCounterState();
+    setCount(initial);
+    setStepSize(step);
+    setStepInput(String(step));
+    setStepError(null);
+    setStepEntryMode(false);
+    setStepEntryBuffer("");
+  };
 
   /**
    * double — multiply the current count by 2.
@@ -348,6 +458,9 @@ export function Counter({ initial = 0, step = 1 }: CounterProps) {
         </button>
         <button type="button" onClick={double} aria-label="double">
           Double
+        </button>
+        <button type="button" onClick={clearSaved} aria-label="clear saved">
+          Clear Saved
         </button>
       </div>
       <label className="counter__step">

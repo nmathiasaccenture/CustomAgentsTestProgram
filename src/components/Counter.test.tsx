@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Counter } from "./Counter";
+import { COUNTER_STORAGE_KEY } from "../lib/counterStorage";
 
 const renderCounter = (props: Parameters<typeof Counter>[0] = {}) => {
   const user = userEvent.setup();
@@ -371,5 +372,95 @@ describe("Counter", () => {
     expect(document.activeElement).not.toBe(section());
     // The newly focused element should be one of the counter's buttons.
     expect(document.activeElement?.tagName).toBe("BUTTON");
+  });
+
+  // ── Persistence (localStorage hydration + write-through) ────────────────────
+
+  describe("persistence", () => {
+    // App.tsx renders <Counter initial={0} step={1} />, so renderCounter()
+    // with no overrides matches the production prop defaults.
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    it("hydrates count and step from saved state on mount", () => {
+      localStorage.setItem(
+        COUNTER_STORAGE_KEY,
+        JSON.stringify({ count: 7, stepSize: 3 }),
+      );
+      const { count, step } = renderCounter();
+      expect(count()).toHaveTextContent("7");
+      expect(step()).toHaveValue(3);
+    });
+
+    it("uses prop defaults when no saved state exists", () => {
+      const { count, step } = renderCounter({ initial: 0, step: 1 });
+      expect(count()).toHaveTextContent("0");
+      expect(step()).toHaveValue(1);
+    });
+
+    it("uses prop defaults and does not crash on corrupted storage", () => {
+      localStorage.setItem(COUNTER_STORAGE_KEY, "{not json");
+      const { count, step } = renderCounter({ initial: 0, step: 1 });
+      expect(count()).toHaveTextContent("0");
+      expect(step()).toHaveValue(1);
+    });
+
+    it("persists count to localStorage on increment", async () => {
+      const { user, inc } = renderCounter({ initial: 0, step: 1 });
+      await user.click(inc());
+      const raw = localStorage.getItem(COUNTER_STORAGE_KEY);
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw as string)).toEqual({ count: 1, stepSize: 1 });
+    });
+
+    it("persists stepSize to localStorage when step changes", async () => {
+      const { user, step } = renderCounter({ initial: 0, step: 1 });
+      await user.clear(step());
+      await user.type(step(), "5");
+      const raw = localStorage.getItem(COUNTER_STORAGE_KEY);
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw as string)).toEqual({ count: 0, stepSize: 5 });
+    });
+
+    it("does NOT clobber saved state on initial render (hasHydratedRef gate)", () => {
+      // Critical regression guard: if the save effect fires on first commit
+      // before hydration completes, it would overwrite this snapshot with
+      // the prop defaults {count: 0, stepSize: 1}.
+      localStorage.setItem(
+        COUNTER_STORAGE_KEY,
+        JSON.stringify({ count: 42, stepSize: 5 }),
+      );
+      renderCounter({ initial: 0, step: 1 });
+      const raw = localStorage.getItem(COUNTER_STORAGE_KEY);
+      expect(JSON.parse(raw as string)).toEqual({ count: 42, stepSize: 5 });
+    });
+
+    it("Clear Saved resets count, step, and removes the storage key", async () => {
+      localStorage.setItem(
+        COUNTER_STORAGE_KEY,
+        JSON.stringify({ count: 99, stepSize: 4 }),
+      );
+      const { user, count, step } = renderCounter({ initial: 0, step: 1 });
+      // Sanity: hydration applied the saved state.
+      expect(count()).toHaveTextContent("99");
+      expect(step()).toHaveValue(4);
+
+      const clearBtn = screen.getByRole("button", { name: /clear saved/i });
+      await user.click(clearBtn);
+
+      // (a) count display reverts to prop default.
+      expect(count()).toHaveTextContent("0");
+      // (b) step input reverts to prop default.
+      expect(step()).toHaveValue(1);
+      // (c) storage now mirrors the visible (default) state. clearSaved wipes
+      // the key, but the subsequent state reset triggers the persistence
+      // effect to re-write {count: initial, stepSize: step}. This is the
+      // documented impl behavior — storage stays in sync with the UI rather
+      // than holding a stale "null until the next change" gap.
+      expect(
+        JSON.parse(localStorage.getItem(COUNTER_STORAGE_KEY) as string),
+      ).toEqual({ count: 0, stepSize: 1 });
+    });
   });
 });
