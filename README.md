@@ -45,7 +45,7 @@ import { Counter } from "./src/components/Counter";
 
 ### Edge cases
 
-- A non-positive or non-numeric step (`0`, `-2`, empty input) falls back to `1` so the buttons always make progress.
+- A non-positive or non-numeric step (`0`, `-2`, empty input) shows the error message `"Step must be positive number"` below the input. While the error is showing, `stepSize` is preserved at the last valid value, so `+` / `−` continue to use the previous good step. The error clears as soon as a valid positive number is entered.
 - `Reset` returns the count to whatever `initial` was passed in, not zero.
 - `Double` does not modify the configured step, so subsequent `+` / `−` still use the same step value. Doubling a negative count yields a more-negative count, and doubling `0` stays `0`.
 
@@ -55,7 +55,7 @@ import { Counter } from "./src/components/Counter";
 src/
   components/
     Counter.tsx        # the feature
-    Counter.test.tsx   # unit tests (13 cases)
+    Counter.test.tsx   # unit tests (20 cases)
   App.tsx              # mounts <Counter />
   main.tsx             # React entry
   setupTests.ts        # @testing-library/jest-dom setup
@@ -70,7 +70,8 @@ The test suite covers:
 - Increment / decrement by the configured step
 - Reset returning to `initial` (not 0)
 - Updating the step at runtime applies to subsequent operations
-- Step fallback to `1` for non-positive or empty input
+- Validation: invalid step (0, negative, cleared, non-numeric) shows an error message and preserves the last valid step
+- Accessibility: error element exposes `role="alert"`; input wires `aria-invalid` and `aria-describedby`
 - Doubling: multiplies the current count by 2 without modifying the step
 
 Run once: `npm test`. Watch mode: `npm run test:watch`.

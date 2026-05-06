@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Counter } from "./Counter";
 
@@ -14,6 +14,7 @@ const renderCounter = (props: Parameters<typeof Counter>[0] = {}) => {
     reset: () => screen.getByRole("button", { name: /reset/i }),
     double: () => screen.getByRole("button", { name: /double/i }),
     step: () => screen.getByRole("spinbutton", { name: /step size/i }),
+    error: () => screen.queryByRole("alert"),
   };
 };
 
@@ -58,19 +59,73 @@ describe("Counter", () => {
     expect(count()).toHaveTextContent("5");
   });
 
-  it("falls back to step=1 when given a non-positive step", async () => {
-    const { user, count, inc, step } = renderCounter();
+  it("shows error and preserves last valid step when input is non-positive", async () => {
+    const { user, count, inc, step, error } = renderCounter({ step: 4 });
     await user.clear(step());
     await user.type(step(), "0");
+    expect(error()).toHaveTextContent("Step must be positive number");
     await user.click(inc());
-    expect(count()).toHaveTextContent("1");
+    expect(count()).toHaveTextContent("4");
   });
 
-  it("falls back to step=1 when the step input is cleared", async () => {
-    const { user, count, inc, step } = renderCounter({ step: 4 });
+  it("shows error and preserves last valid step when input is cleared", async () => {
+    const { user, count, inc, step, error } = renderCounter({ step: 4 });
     await user.clear(step());
+    expect(error()).toHaveTextContent("Step must be positive number");
     await user.click(inc());
-    expect(count()).toHaveTextContent("1");
+    expect(count()).toHaveTextContent("4");
+  });
+
+  it("shows no error on initial render", () => {
+    const { error } = renderCounter();
+    expect(error()).not.toBeInTheDocument();
+  });
+
+  it("shows error when input is negative", async () => {
+    const { user, step, error } = renderCounter();
+    await user.clear(step());
+    await user.type(step(), "-2");
+    expect(error()).toHaveTextContent("Step must be positive number");
+  });
+
+  it("shows error when input is non-numeric", () => {
+    const { step, error } = renderCounter();
+    fireEvent.change(step(), { target: { value: "abc" } });
+    expect(error()).toHaveTextContent("Step must be positive number");
+  });
+
+  it("clears error when a valid positive number is entered after invalid", async () => {
+    const { user, count, inc, step, error } = renderCounter();
+    await user.clear(step());
+    await user.type(step(), "0");
+    expect(error()).toHaveTextContent("Step must be positive number");
+    await user.clear(step());
+    await user.type(step(), "5");
+    expect(error()).not.toBeInTheDocument();
+    await user.click(inc());
+    expect(count()).toHaveTextContent("5");
+  });
+
+  it("sets aria-invalid and aria-describedby on the input while error shows", async () => {
+    const { user, step } = renderCounter();
+    await user.clear(step());
+    await user.type(step(), "0");
+    expect(step()).toHaveAttribute("aria-invalid", "true");
+    expect(step()).toHaveAttribute("aria-describedby", "step-error");
+  });
+
+  it("omits aria-describedby when no error", () => {
+    const { step } = renderCounter();
+    expect(step()).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("renders error element with role=alert and counter__error class", async () => {
+    const { user, step, error } = renderCounter();
+    await user.clear(step());
+    await user.type(step(), "0");
+    const el = error();
+    expect(el).toHaveAttribute("role", "alert");
+    expect(el).toHaveClass("counter__error");
   });
 
   it("doubles the current value immediately on Double click", async () => {
